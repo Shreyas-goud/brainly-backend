@@ -1,6 +1,7 @@
 import axios from "axios";
 import { IncomingMessage } from "http";
 import { GITHUB_TOKEN, INSTAGRAM_APP_ID, INSTAGRAM_CLIENT_TOKEN } from "../config";
+import { safeAgents } from "./safeFetch";
 
 export interface OgData {
   title: string | null;
@@ -145,6 +146,7 @@ async function fetchHtmlHead(url: string): Promise<string | null> {
     validateStatus: () => true, // never throw based on status code
     maxRedirects: 5,
     headers: BROWSER_HEADERS,
+    ...safeAgents, // SSRF guard — blocks private/internal addresses on every hop
   });
 
   // Only bother with HTML responses.
@@ -207,7 +209,7 @@ async function fetchGitHubRepo(
 
   const { data, status } = await axios.get(
     `https://api.github.com/repos/${owner}/${repo}`,
-    { timeout: TIMEOUT_MS, headers, validateStatus: () => true }
+    { timeout: TIMEOUT_MS, headers, validateStatus: () => true, ...safeAgents }
   );
   if (status !== 200) return null;
 
@@ -238,6 +240,7 @@ async function fetchInstagramOembed(url: string): Promise<OgData | null> {
   const { data, status } = await axios.get(endpoint, {
     timeout: TIMEOUT_MS,
     validateStatus: () => true,
+    ...safeAgents,
   });
 
   if (status !== 200 || !data.thumbnail_url) return null;

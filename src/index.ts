@@ -38,6 +38,7 @@ import {
 import { getPlaylistItems, getPlaylistMeta } from "./services/youtube";
 import { fetchTweet, type NormalizedTweet } from "./services/twitter";
 import { fetchLinkPreview } from "./services/linkPreview";
+import { safeAgents } from "./services/safeFetch";
 import { IncomingMessage } from "http";
 import { securityHeaders, createRateLimiter } from "./security";
 
@@ -180,6 +181,9 @@ app.get("/api/v1/reddit", userMiddleware, writeLimiter, async (req, res) => {
         "User-Agent": "Brainlyy/1.0 (personal knowledge app)",
         Accept: "application/json",
       },
+      // The reddit regex matches `reddit.com/...` anywhere in the string, so a
+      // crafted URL could embed an internal host. The guard blocks that.
+      ...safeAgents,
     });
 
     if (status !== 200 || !Array.isArray(data)) {
@@ -249,7 +253,7 @@ const CDN_HEADERS = {
   Origin: "https://www.instagram.com",
 };
 
-app.get("/api/v1/proxy-instagram", writeLimiter, async (req, res) => {
+app.get("/api/v1/proxy-instagram", userMiddleware, writeLimiter, async (req, res) => {
   const postUrl =
     typeof req.query.postUrl === "string" ? req.query.postUrl : "";
   if (!postUrl || !INSTAGRAM_POST_RE_PROXY.test(postUrl)) {
@@ -270,7 +274,7 @@ app.get("/api/v1/proxy-instagram", writeLimiter, async (req, res) => {
       const { data, status } = await axios.get(
         `https://graph.facebook.com/v18.0/instagram_oembed` +
           `?url=${encodeURIComponent(postUrl)}&access_token=${accessToken}&fields=thumbnail_url`,
-        { timeout: 8000, validateStatus: () => true }
+        { timeout: 8000, validateStatus: () => true, ...safeAgents }
       );
       if (status === 200 && data.thumbnail_url) {
         cdnUrl = data.thumbnail_url as string;
@@ -288,6 +292,7 @@ app.get("/api/v1/proxy-instagram", writeLimiter, async (req, res) => {
       timeout: 8000,
       validateStatus: () => true,
       headers: CDN_HEADERS,
+      ...safeAgents,
     });
     if (upstream.status !== 200) return res.status(upstream.status).end();
 
@@ -917,13 +922,14 @@ app.get("/api/v1/brain/:shareLink", async (req, res) => {
             _id: 1,
           })
         : Promise.resolve([]),
-      UserModel.findById(userId),
+      // Existence check only — never load (or expose) the owner's email/hash
+      // on a public, unauthenticated endpoint.
+      UserModel.findById(userId).select("_id"),
     ]);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
     res.json({
-      email: user.email,
       channels,
       content,
       collections,

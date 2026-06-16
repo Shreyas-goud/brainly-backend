@@ -26,6 +26,7 @@ const validation_1 = require("./validation");
 const youtube_1 = require("./services/youtube");
 const twitter_1 = require("./services/twitter");
 const linkPreview_1 = require("./services/linkPreview");
+const safeFetch_1 = require("./services/safeFetch");
 const security_1 = require("./security");
 const app = (0, express_1.default)();
 app.set("trust proxy", 1);
@@ -128,15 +129,10 @@ app.get("/api/v1/reddit", middleware_1.userMiddleware, writeLimiter, (req, res) 
     }
     try {
         const jsonUrl = url.replace(/\?.*$/, "").replace(/\/$/, "") + ".json";
-        const { data, status } = yield axios_1.default.get(jsonUrl, {
-            timeout: 8000,
-            validateStatus: () => true,
-            params: { raw_json: 1, limit: 1 },
-            headers: {
+        const { data, status } = yield axios_1.default.get(jsonUrl, Object.assign({ timeout: 8000, validateStatus: () => true, params: { raw_json: 1, limit: 1 }, headers: {
                 "User-Agent": "Brainlyy/1.0 (personal knowledge app)",
                 Accept: "application/json",
-            },
-        });
+            } }, safeFetch_1.safeAgents));
         if (status !== 200 || !Array.isArray(data)) {
             return res.status(502).json({ message: "Failed to fetch Reddit post" });
         }
@@ -188,7 +184,7 @@ const CDN_HEADERS = {
     Referer: "https://www.instagram.com/",
     Origin: "https://www.instagram.com",
 };
-app.get("/api/v1/proxy-instagram", writeLimiter, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+app.get("/api/v1/proxy-instagram", middleware_1.userMiddleware, writeLimiter, (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const postUrl = typeof req.query.postUrl === "string" ? req.query.postUrl : "";
     if (!postUrl || !INSTAGRAM_POST_RE_PROXY.test(postUrl)) {
@@ -207,7 +203,7 @@ app.get("/api/v1/proxy-instagram", writeLimiter, (req, res) => __awaiter(void 0,
         try {
             const accessToken = `${config_1.INSTAGRAM_APP_ID}|${config_1.INSTAGRAM_CLIENT_TOKEN}`;
             const { data, status } = yield axios_1.default.get(`https://graph.facebook.com/v18.0/instagram_oembed` +
-                `?url=${encodeURIComponent(postUrl)}&access_token=${accessToken}&fields=thumbnail_url`, { timeout: 8000, validateStatus: () => true });
+                `?url=${encodeURIComponent(postUrl)}&access_token=${accessToken}&fields=thumbnail_url`, Object.assign({ timeout: 8000, validateStatus: () => true }, safeFetch_1.safeAgents));
             if (status === 200 && data.thumbnail_url) {
                 cdnUrl = data.thumbnail_url;
                 instagramThumbCache.set(postUrl, { cdnUrl, at: Date.now() });
@@ -219,12 +215,7 @@ app.get("/api/v1/proxy-instagram", writeLimiter, (req, res) => __awaiter(void 0,
         return res.status(404).end();
     // Proxy the (now-fresh) CDN URL server-side — bypasses browser Referer block.
     try {
-        const upstream = yield axios_1.default.get(cdnUrl, {
-            responseType: "stream",
-            timeout: 8000,
-            validateStatus: () => true,
-            headers: CDN_HEADERS,
-        });
+        const upstream = yield axios_1.default.get(cdnUrl, Object.assign({ responseType: "stream", timeout: 8000, validateStatus: () => true, headers: CDN_HEADERS }, safeFetch_1.safeAgents));
         if (upstream.status !== 200)
             return res.status(upstream.status).end();
         const ct = (_a = upstream.headers["content-type"]) !== null && _a !== void 0 ? _a : "image/jpeg";
@@ -792,13 +783,14 @@ app.get("/api/v1/brain/:shareLink", (req, res) => __awaiter(void 0, void 0, void
                     _id: 1,
                 })
                 : Promise.resolve([]),
-            db_1.UserModel.findById(userId),
+            // Existence check only — never load (or expose) the owner's email/hash
+            // on a public, unauthenticated endpoint.
+            db_1.UserModel.findById(userId).select("_id"),
         ]);
         if (!user) {
             return res.status(404).json({ message: "User not found" });
         }
         res.json({
-            email: user.email,
             channels,
             content,
             collections,

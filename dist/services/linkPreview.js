@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.fetchLinkPreview = fetchLinkPreview;
 const axios_1 = __importDefault(require("axios"));
 const config_1 = require("../config");
+const safeFetch_1 = require("./safeFetch");
 const TIMEOUT_MS = 8000;
 // Stop streaming once we've seen </head> or hit this byte cap.
 // OG meta tags live in <head> which is always under 100KB even on
@@ -121,13 +122,7 @@ function parseOg(html, pageUrl) {
 function fetchHtmlHead(url) {
     return __awaiter(this, void 0, void 0, function* () {
         var _a;
-        const response = yield axios_1.default.get(url, {
-            responseType: "stream",
-            timeout: TIMEOUT_MS,
-            validateStatus: () => true, // never throw based on status code
-            maxRedirects: 5,
-            headers: BROWSER_HEADERS,
-        });
+        const response = yield axios_1.default.get(url, Object.assign({ responseType: "stream", timeout: TIMEOUT_MS, validateStatus: () => true, maxRedirects: 5, headers: BROWSER_HEADERS }, safeFetch_1.safeAgents));
         // Only bother with HTML responses.
         const ct = (_a = response.headers["content-type"]) !== null && _a !== void 0 ? _a : "";
         if (!ct.includes("text/html") && !ct.includes("application/xhtml")) {
@@ -183,7 +178,7 @@ function fetchGitHubRepo(owner, repo) {
         };
         if (config_1.GITHUB_TOKEN)
             headers["Authorization"] = `Bearer ${config_1.GITHUB_TOKEN}`;
-        const { data, status } = yield axios_1.default.get(`https://api.github.com/repos/${owner}/${repo}`, { timeout: TIMEOUT_MS, headers, validateStatus: () => true });
+        const { data, status } = yield axios_1.default.get(`https://api.github.com/repos/${owner}/${repo}`, Object.assign({ timeout: TIMEOUT_MS, headers, validateStatus: () => true }, safeFetch_1.safeAgents));
         if (status !== 200)
             return null;
         return {
@@ -209,10 +204,7 @@ function fetchInstagramOembed(url) {
         const accessToken = `${config_1.INSTAGRAM_APP_ID}|${config_1.INSTAGRAM_CLIENT_TOKEN}`;
         const endpoint = `https://graph.facebook.com/v18.0/instagram_oembed` +
             `?url=${encodeURIComponent(url)}&access_token=${accessToken}&fields=thumbnail_url,author_name,title`;
-        const { data, status } = yield axios_1.default.get(endpoint, {
-            timeout: TIMEOUT_MS,
-            validateStatus: () => true,
-        });
+        const { data, status } = yield axios_1.default.get(endpoint, Object.assign({ timeout: TIMEOUT_MS, validateStatus: () => true }, safeFetch_1.safeAgents));
         if (status !== 200 || !data.thumbnail_url)
             return null;
         return {
