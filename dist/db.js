@@ -46,14 +46,52 @@ exports.ShareLinkModel = exports.BrainModel = exports.LinkModel = exports.Collec
 exports.connectDB = connectDB;
 const mongoose_1 = __importStar(require("mongoose"));
 const config_1 = require("./config");
+// Fail fast with a clear error instead of hanging, and keep sockets healthy.
+// Once the initial connection succeeds, the driver auto-reconnects on transient
+// drops on its own.
+const CONNECT_OPTIONS = {
+    serverSelectionTimeoutMS: 10000,
+    socketTimeoutMS: 45000,
+};
+let listenersAttached = false;
+function attachConnectionListeners() {
+    if (listenersAttached)
+        return;
+    listenersAttached = true;
+    const c = mongoose_1.default.connection;
+    // Critical: without an 'error' listener a transient driver error (e.g. a
+    // failed SRV re-poll on Atlas) surfaces as an *unhandled* exception and
+    // crashes the whole process. With one, it's logged and the driver recovers.
+    c.on("error", (err) => { var _a; return console.error("[mongo] connection error:", (_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err); });
+    c.on("disconnected", () => console.warn("[mongo] disconnected — driver will attempt to reconnect"));
+    c.on("reconnected", () => console.log("[mongo] reconnected"));
+}
 /**
- * Single, awaited connection. The previous version called mongoose.connect()
- * both here (at import time, unguarded) and again in index.ts, which produced
- * an unhandled promise rejection on a bad URI before the real handler ran.
+ * Connect with bounded retries + exponential backoff. A cold Atlas cluster or a
+ * brief DNS blip on boot should not kill the server — we retry a few times
+ * before giving up. The previous version called mongoose.connect() once and
+ * propagated the first failure straight to process.exit.
  */
 function connectDB() {
-    return __awaiter(this, void 0, void 0, function* () {
-        yield mongoose_1.default.connect(config_1.MONGODB_URI);
+    return __awaiter(this, arguments, void 0, function* (maxAttempts = 5) {
+        attachConnectionListeners();
+        let attempt = 0;
+        for (;;) {
+            attempt++;
+            try {
+                yield mongoose_1.default.connect(config_1.MONGODB_URI, CONNECT_OPTIONS);
+                return;
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                if (attempt >= maxAttempts) {
+                    throw new Error(`MongoDB connection failed after ${attempt} attempts: ${msg}`);
+                }
+                const delayMs = Math.min(1000 * 2 ** (attempt - 1), 15000); // 1s,2s,4s,8s…
+                console.warn(`[mongo] connect attempt ${attempt} failed (${msg}); retrying in ${delayMs}ms`);
+                yield new Promise((resolve) => setTimeout(resolve, delayMs));
+            }
+        }
     });
 }
 const UserSchema = new mongoose_1.Schema({

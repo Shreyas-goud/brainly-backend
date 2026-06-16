@@ -943,6 +943,13 @@ app.get("/api/v1/brain/:shareLink", async (req, res) => {
 
 // --- Boot ----------------------------------------------------------------
 
+// Backstop: a stray promise rejection (e.g. a transient driver re-poll that
+// slips past the connection 'error' handler) should be logged, never crash the
+// whole server. This is the failure mode that took the service down before.
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+
 async function start() {
   try {
     await connectDB();
@@ -951,6 +958,7 @@ async function start() {
       console.log(`Server listening on port ${PORT} (${NODE_ENV})`);
     });
   } catch (err) {
+    // Retries are exhausted at this point — exit so the platform restarts us.
     console.error("Failed to start server:", err);
     process.exit(1);
   }
